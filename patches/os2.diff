@@ -1,0 +1,225 @@
+diff --git a/Makefile b/Makefile
+index 7a22c42..c7ddfb4 100644
+--- a/Makefile
++++ b/Makefile
+@@ -161,6 +161,13 @@ $(LIBX264): .depend $(OBJS) $(OBJASM)
+ 	$(if $(RANLIB), $(RANLIB) $@)
+ 
+ $(SONAME): .depend $(OBJS) $(OBJASM) $(OBJSO)
++ifeq ($(SYS),OS2)
++	echo "LIBRARY $(SONAME:.$(SOSUFFIX)=)" > $(SODEF)
++	echo "DATA MULTIPLE NONSHARED" >> $(SODEF)
++	echo "EXPORTS" >> $(SODEF)
++	emxexp $(OBJS) $(OBJASM) >> $(SODEF)
++	emximp -o $(IMPLIBNAME) $(SODEF)
++endif
+ 	$(LD)$@ $(OBJS) $(OBJASM) $(OBJSO) $(SOFLAGS) $(LDFLAGS)
+ 
+ ifneq ($(EXE),)
+@@ -230,7 +237,7 @@ fprofiled:
+ endif
+ 
+ clean:
+-	rm -f $(OBJS) $(OBJASM) $(OBJCLI) $(OBJSO) $(SONAME) *.a *.lib *.exp *.pdb x264 x264.exe .depend TAGS
++	rm -f $(OBJS) $(OBJASM) $(OBJCLI) $(OBJSO) $(SONAME) $(SODEF) *.a *.lib *.exp *.pdb x264 x264.exe .depend TAGS
+ 	rm -f checkasm checkasm.exe $(OBJCHK)
+ 	rm -f $(SRC2:%.c=%.gcda) $(SRC2:%.c=%.gcno) *.dyn pgopti.dpi pgopti.dpi.lock
+ 
+@@ -238,29 +245,29 @@ distclean: clean
+ 	rm -f config.mak x264_config.h config.h config.log x264.pc x264.def
+ 
+ install-cli: cli
+-	install -d $(DESTDIR)$(bindir)
+-	install x264$(EXE) $(DESTDIR)$(bindir)
++	$(INSTALL) -d $(DESTDIR)$(bindir)
++	$(INSTALL) x264$(EXE) $(DESTDIR)$(bindir)
+ 
+ install-lib-dev:
+-	install -d $(DESTDIR)$(includedir)
+-	install -d $(DESTDIR)$(libdir)
+-	install -d $(DESTDIR)$(libdir)/pkgconfig
+-	install -m 644 $(SRCPATH)/x264.h $(DESTDIR)$(includedir)
+-	install -m 644 x264_config.h $(DESTDIR)$(includedir)
+-	install -m 644 x264.pc $(DESTDIR)$(libdir)/pkgconfig
++	$(INSTALL) -d $(DESTDIR)$(includedir)
++	$(INSTALL) -d $(DESTDIR)$(libdir)
++	$(INSTALL) -d $(DESTDIR)$(libdir)/pkgconfig
++	$(INSTALL) -m 644 $(SRCPATH)/x264.h $(DESTDIR)$(includedir)
++	$(INSTALL) -m 644 x264_config.h $(DESTDIR)$(includedir)
++	$(INSTALL) -m 644 x264.pc $(DESTDIR)$(libdir)/pkgconfig
+ 
+ install-lib-static: lib-static install-lib-dev
+-	install -m 644 $(LIBX264) $(DESTDIR)$(libdir)
++	$(INSTALL) -m 644 $(LIBX264) $(DESTDIR)$(libdir)
+ 	$(if $(RANLIB), $(RANLIB) $(DESTDIR)$(libdir)/$(LIBX264))
+ 
+ install-lib-shared: lib-shared install-lib-dev
+ ifneq ($(IMPLIBNAME),)
+-	install -d $(DESTDIR)$(bindir)
+-	install -m 755 $(SONAME) $(DESTDIR)$(bindir)
+-	install -m 644 $(IMPLIBNAME) $(DESTDIR)$(libdir)
++	$(INSTALL) -d $(DESTDIR)$(bindir)
++	$(INSTALL) -m 755 $(SONAME) $(DESTDIR)$(bindir)
++	$(INSTALL) -m 644 $(IMPLIBNAME) $(DESTDIR)$(libdir)
+ else ifneq ($(SONAME),)
+ 	ln -f -s $(SONAME) $(DESTDIR)$(libdir)/libx264.$(SOSUFFIX)
+-	install -m 755 $(SONAME) $(DESTDIR)$(libdir)
++	$(INSTALL) -m 755 $(SONAME) $(DESTDIR)$(libdir)
+ endif
+ 
+ uninstall:
+diff --git a/common/cpu.c b/common/cpu.c
+index fa57407..5045be5 100644
+--- a/common/cpu.c
++++ b/common/cpu.c
+@@ -44,6 +44,10 @@
+ #include <sys/sysctl.h>
+ #include <machine/cpu.h>
+ #endif
++#ifdef SYS_OS2
++#define INCL_DOS
++#include <os2.h>
++#endif
+ 
+ const x264_cpu_name_t x264_cpu_names[] =
+ {
+@@ -435,6 +439,13 @@ int x264_cpu_num_processors( void )
+     }
+     return ncpu;
+ 
++#elif defined(SYS_OS2)
++    ULONG numprocs = 1;
++
++    DosQuerySysInfo(QSV_NUMPROCESSORS, QSV_NUMPROCESSORS, &numprocs, sizeof(numprocs));
++
++    return numprocs;
++
+ #else
+     return 1;
+ #endif
+diff --git a/common/osdep.h b/common/osdep.h
+index f7cad57..fa3f390 100644
+--- a/common/osdep.h
++++ b/common/osdep.h
+@@ -43,6 +43,20 @@
+ #ifdef _WIN32
+ #include <io.h>    // _setmode()
+ #include <fcntl.h> // _O_BINARY
++#include <stdio.h> // _fileno
++#define set_bin_mode(stream) _setmode(_fileno(stream), _O_BINARY)
++#elif defined(SYS_OS2)
++#include <io.h>         // isatty(), setmode()
++#include <fcntl.h>      // O_BINARY
++#include <stdio.h>      // FILE, fileno()
++
++static inline void set_bin_mode(FILE *stream)
++{
++    if(!isatty(fileno(stream)))
++        setmode(fileno(stream), O_BINARY);
++}
++#else
++#define set_bin_mode(stream)
+ #endif
+ 
+ #ifdef __ICL
+diff --git a/common/x86/x86inc.asm b/common/x86/x86inc.asm
+index d7513be..527f2a2 100644
+--- a/common/x86/x86inc.asm
++++ b/common/x86/x86inc.asm
+@@ -92,7 +92,12 @@
+ %endif
+ 
+ ; Always use long nops (reduces 0x90 spam in disassembly on x86_32)
++%ifndef __NASM_VER__
+ CPU amdnop
++%else
++%use smartalign
++ALIGNMODE k7
++%endif
+ 
+ ; Macros to eliminate most code duplication between x86_32 and x86_64:
+ ; Currently this works only for leaf functions which load all their arguments
+@@ -139,10 +144,10 @@ CPU amdnop
+         %define r%1mp %2
+     %elif ARCH_X86_64 ; memory
+         %define r%1m [rsp + stack_offset + %3]
+-        %define r%1mp qword r %+ %1m
++        %define r%1mp qword r %+ %1 %+ m
+     %else
+         %define r%1m [esp + stack_offset + %3]
+-        %define r%1mp dword r %+ %1m
++        %define r%1mp dword r %+ %1 %+ m
+     %endif
+     %define r%1  %2
+ %endmacro
+diff --git a/configure b/configure
+old mode 100755
+new mode 100644
+index 01da01e..5860e65
+--- a/configure
++++ b/configure
+@@ -520,6 +520,13 @@ case $host_os in
+         fi
+         HAVE_GETOPT_LONG=0
+         ;;
++    os2*)
++        SYS="OS2"
++        EXE=".exe"
++        DEVNULL="NUL"
++        define HAVE_MALLOC_H
++        LDFLAGS="$LDFLAGS -Zomf -Zbin-files"
++        ;;
+     *)
+         die "Unknown system $host, edit the configure"
+         ;;
+@@ -560,9 +567,12 @@ case $host_cpu in
+             ASFLAGS="$ASFLAGS -f win32 -DPREFIX"
+             LDFLAGS="$LDFLAGS -Wl,--large-address-aware"
+             [ $compiler = GNU ] && RCFLAGS="--target=pe-i386 $RCFLAGS"
++        elif [ "$SYS" = OS2 ]; then
++            ASFLAGS="$ASFLAGS -f aout -DPREFIX"
+         else
+             ASFLAGS="$ASFLAGS -f elf"
+         fi
++        as_check || AS="nasm"
+         ;;
+     x86_64)
+         ARCH="X86_64"
+@@ -1077,6 +1087,7 @@ PROF_GEN_CC=$PROF_GEN_CC
+ PROF_GEN_LD=$PROF_GEN_LD
+ PROF_USE_CC=$PROF_USE_CC
+ PROF_USE_LD=$PROF_USE_LD
++INSTALL=${INSTALL-install}
+ EOF
+ 
+ if [ $compiler = ICL ]; then
+@@ -1115,6 +1126,12 @@ if [ "$shared" = "yes" ]; then
+         echo "SOSUFFIX=so" >> config.mak
+         echo "SONAME=libx264.so.$API" >> config.mak
+         echo "SOFLAGS=-shared -Wl,-h,\$(SONAME) $SOFLAGS" >> config.mak
++     elif [ "$SYS" = "OS2" ]; then
++         echo "SOSUFFIX=dll" >> config.mak
++         echo "SONAME=libx264.dll" >> config.mak
++         echo "SODEF=libx264.def" >> config.mak
++         echo "IMPLIBNAME=libx264_dll.a" >> config.mak
++         echo 'SOFLAGS=-Zdll $(SODEF)' >> config.mak
+     else
+         echo "SOSUFFIX=so" >> config.mak
+         echo "SONAME=libx264.so.$API" >> config.mak
+diff --git a/x264.c b/x264.c
+index 8dcc655..624b5e3 100644
+--- a/x264.c
++++ b/x264.c
+@@ -274,10 +274,8 @@ int main( int argc, char **argv )
+ 
+     FAIL_IF_ERROR( x264_threading_init(), "unable to initialize threading\n" )
+ 
+-#ifdef _WIN32
+-    _setmode(_fileno(stdin), _O_BINARY);
+-    _setmode(_fileno(stdout), _O_BINARY);
+-#endif
++    set_bin_mode(stdin);
++    set_bin_mode(stdout);
+ 
+     GetConsoleTitle( originalCTitle, sizeof(originalCTitle) );
+ 

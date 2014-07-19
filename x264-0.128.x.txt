@@ -1,0 +1,29 @@
+                          Upload Information Template for Hobbes.nmsu.edu
+                          ===============================================
+
+        Archive Filename: x264-0.128.x.zip
+       Short Description: x264 v0.128.x for OS/2
+        Long Description: x264 v0.128.x for OS/2.
+                          x264 is a free library for encoding H264/AVC video streams.
+
+      Proposed directory
+           for placement: /pub/os2/dev/mm
+
+               Your name: KO Myung-Hun
+           Email address: komh@chollian.net
+    Program contact name: (same)
+   Program contact email: (same)
+             Program URL: origianl : http://www.videolan.org/developers/x264.html
+                          OS/2 : https://github.com/komh/x264-os2
+
+      Would you like the
+   contact email address
+    included in listings? yes
+
+Operating System/Version: 
+ Additional requirements: kLIBC065, gcc 4.4.6, binutils-2.21.1 or later, NASM 2.10 or later
+
+                Replaces: (none)
+
+
+
